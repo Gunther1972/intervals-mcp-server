@@ -64,15 +64,15 @@ def start_server(mcp_instance: FastMCP, transport: TransportAliases) -> None:
     if transport == TransportAliases.STDIO:
         logger.info("Starting MCP server with stdio transport.")
     else:  # STREAMABLE_HTTP
-    import uvicorn
-    app = mcp_instance.get_asgi_app()
-    uvicorn.run(
-        app,
-        host=mcp_instance.settings.host,
-        port=mcp_instance.settings.port,
-        forwarded_allow_ips="*",
-        proxy_headers=True,
-    )    
+        import uvicorn
+        app = mcp_instance.get_asgi_app()
+        uvicorn.run(
+            app,
+            host=mcp_instance.settings.host,
+            port=mcp_instance.settings.port,
+            forwarded_allow_ips="*",
+            proxy_headers=True,
+        )    
         mcp_instance.run()
     elif transport == TransportAliases.SSE:
         mount_path = os.getenv("MCP_SSE_MOUNT_PATH")

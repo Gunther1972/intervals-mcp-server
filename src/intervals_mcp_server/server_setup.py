@@ -74,12 +74,4 @@ def start_server(mcp_instance: FastMCP, transport: TransportAliases) -> None:
             port,
             mcp_instance.settings.streamable_http_path,
         )
-        import uvicorn
-        app = mcp_instance.get_asgi_app()
-        uvicorn.run(
-            app,
-            host=host,
-            port=port,
-            forwarded_allow_ips="*",
-            proxy_headers=True,
-        )
+        mcp_instance.run(transport="streamable-http")

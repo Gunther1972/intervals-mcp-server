@@ -45,14 +45,7 @@ def setup_transport() -> TransportAliases:
 
 
 def start_server(mcp_instance: FastMCP, transport: TransportAliases) -> None:
-    """
-    Start the MCP server with the specified transport.
-
-    Args:
-        mcp_instance (FastMCP): The FastMCP server instance to start.
-        transport (TransportAliases): The transport type to use.
-    """
-
+    # Forceer host en poort voor Render
     mcp_instance.settings.host = os.getenv("FASTMCP_HOST", "0.0.0.0")
     port = os.getenv("PORT")
     if port:
@@ -63,16 +56,6 @@ def start_server(mcp_instance: FastMCP, transport: TransportAliases) -> None:
 
     if transport == TransportAliases.STDIO:
         logger.info("Starting MCP server with stdio transport.")
-    else:  # STREAMABLE_HTTP
-        import uvicorn
-        app = mcp_instance.get_asgi_app()
-        uvicorn.run(
-            app,
-            host=mcp_instance.settings.host,
-            port=mcp_instance.settings.port,
-            forwarded_allow_ips="*",
-            proxy_headers=True,
-        )    
         mcp_instance.run()
     elif transport == TransportAliases.SSE:
         mount_path = os.getenv("MCP_SSE_MOUNT_PATH")
@@ -91,4 +74,12 @@ def start_server(mcp_instance: FastMCP, transport: TransportAliases) -> None:
             port,
             mcp_instance.settings.streamable_http_path,
         )
-        mcp_instance.run(transport="streamable-http")
+        import uvicorn
+        app = mcp_instance.get_asgi_app()
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            forwarded_allow_ips="*",
+            proxy_headers=True,
+        )

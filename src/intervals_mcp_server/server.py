@@ -34,6 +34,7 @@ Usage:
 """
 
 import logging
+import os
 
 from mcp.server.fastmcp import FastMCP  # pylint: disable=import-error
 

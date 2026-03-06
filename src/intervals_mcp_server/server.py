@@ -60,9 +60,31 @@ logger = logging.getLogger("intervals_icu_mcp_server")
 # Get configuration instance
 config = get_config()
 
-# Initialize FastMCP server with custom lifespan
-mcp = FastMCP("intervals-icu", lifespan=setup_api_client)
+# Get allowed host from environment (Render subdomain)
+allowed_host = os.getenv("ALLOWED_HOST", "localhost")
 
+# Initialize FastMCP server with custom lifespan
+mcp = FastMCP(
+    "intervals-icu",
+    lifespan=setup_api_client,
+    transport_security=TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[
+            allowed_host,
+            "localhost",
+            "localhost:*",
+            "127.0.0.1",
+            "127.0.0.1:*",
+        ],
+        allowed_origins=[
+            f"https://{allowed_host}",
+            "http://localhost",
+            "http://localhost:*",
+            "http://127.0.0.1",
+            "http://127.0.0.1:*",
+        ],
+    ),
+)
 # Set the shared mcp instance for tool modules to use (breaks cyclic imports)
 from intervals_mcp_server import mcp_instance  # pylint: disable=wrong-import-position  # noqa: E402
 

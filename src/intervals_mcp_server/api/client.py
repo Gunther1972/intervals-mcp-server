@@ -22,7 +22,7 @@ logger = logging.getLogger("intervals_icu_mcp_server")
 
 # Create a single AsyncClient instance for all requests (lazily initialized)
 # This can be monkeypatched via server.httpx_client for testing
-httpx_client: httpx.AsyncClient | None = None
+httpx_client: httpx.AsyncClient | None = None  # pylint: disable=invalid-name
 
 
 async def _get_httpx_client() -> httpx.AsyncClient:
@@ -176,6 +176,8 @@ async def make_intervals_request(
 
     async def _send_request(client: httpx.AsyncClient) -> httpx.Response:
         if method in {"POST", "PUT"} and data is not None:
+            body = json.dumps(data)
+            logger.debug("Request %s %s body: %s", method, full_url, body)
             return await client.request(
                 method=method,
                 url=full_url,
@@ -183,7 +185,7 @@ async def make_intervals_request(
                 params=params,
                 auth=auth,
                 timeout=30.0,
-                content=json.dumps(data),
+                content=body,
             )
         return await client.request(
             method=method,

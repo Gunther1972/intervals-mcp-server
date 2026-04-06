@@ -7,6 +7,8 @@ The middleware must:
 3. Hold any other request until the event is set.
 4. Forward requests after the timeout even if the event was never set.
 5. Leave non-POST and non-/messages paths untouched.
+6. Clean up zombie (never-initialized) sessions on a new GET /sse connection.
+7. Preserve already-initialized sessions when a new GET /sse connection arrives.
 """
 
 import asyncio
@@ -22,6 +24,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from intervals_mcp_server.init_guard import (  # pylint: disable=wrong-import-position
     INIT_TIMEOUT,
     InitGuardMiddleware,
+    _cleanup_zombie_sessions,
     _session_events,
 )
 
@@ -214,8 +217,34 @@ async def test_timeout_forwards_request_after_expiry(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_non_post_passes_through_unchanged():
-    """GET requests (SSE endpoint) must bypass the middleware entirely."""
+async def test_sse_get_cleans_up_zombie_sessions():
+    """GET /sse must remove sessions whose event was never set (zombie sessions)."""
+    # Zombie: event exists but was never set
+    zombie_event = asyncio.Event()
+    _session_events["zombie"] = zombie_event
+
+    # Healthy: event is set (session did complete initialization)
+    healthy_event = asyncio.Event()
+    healthy_event.set()
+    _session_events["healthy"] = healthy_event
+
+    async def inner_app(scope, receive, send):
+        pass
+
+    middleware = InitGuardMiddleware(inner_app)
+    await middleware(
+        _scope(method="GET", path="/sse", session_id="irrelevant"),
+        _make_receive(b""),
+        (await _collect_send([])),
+    )
+
+    assert "zombie" not in _session_events, "Zombie session should have been removed"
+    assert "healthy" in _session_events, "Initialized session should be preserved"
+
+
+@pytest.mark.asyncio
+async def test_sse_get_passes_through_to_inner_app():
+    """GET /sse must still reach the inner app after cleanup."""
     called: list[bool] = []
 
     async def inner_app(scope, receive, send):
@@ -229,7 +258,6 @@ async def test_non_post_passes_through_unchanged():
     )
 
     assert called == [True]
-    assert "s6" not in _session_events
 
 
 @pytest.mark.asyncio
@@ -252,8 +280,10 @@ async def test_non_messages_path_passes_through_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_malformed_json_passes_through():
+async def test_malformed_json_passes_through(monkeypatch):
     """A POST with invalid JSON must still reach the inner app (no crash)."""
+    monkeypatch.setattr("intervals_mcp_server.init_guard.INIT_TIMEOUT", 0.05)
+
     called: list[bool] = []
 
     async def inner_app(scope, receive, send):

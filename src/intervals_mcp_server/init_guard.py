@@ -15,6 +15,11 @@ non-handshake POST to /messages back until the per-session
 ``INIT_TIMEOUT`` seconds have elapsed, after which the request is
 forwarded anyway to avoid an infinite stall).
 
+Additionally, every new GET /sse connection (which always starts a fresh
+session) triggers a cleanup of zombie sessions — sessions whose event was
+never set because the previous SSE connection dropped before the handshake
+completed.
+
 Only the SSE transport is affected; stdio is not routed through this
 middleware at all.
 """
@@ -30,7 +35,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 logger = logging.getLogger("intervals_icu_mcp_server")
 
 # Maximum time (seconds) to wait for initialization before forwarding anyway.
-INIT_TIMEOUT: float = 10.0
+INIT_TIMEOUT: float = 30.0
 
 # Per-session asyncio.Event objects.  Keyed by session_id (UUID hex string).
 # An event becomes *set* once the client sends notifications/initialized.
@@ -43,36 +48,63 @@ def _get_or_create_event(session_id: str) -> asyncio.Event:
     return _session_events[session_id]
 
 
+def _cleanup_zombie_sessions() -> None:
+    """Remove sessions whose handshake never completed (event was never set).
+
+    Called on every new GET /sse connection, which always creates a brand-new
+    session.  Any previously tracked session whose event is still unset is a
+    zombie left behind by a dropped SSE connection.
+    """
+    zombie_ids = [sid for sid, ev in _session_events.items() if not ev.is_set()]
+    for sid in zombie_ids:
+        del _session_events[sid]
+    if zombie_ids:
+        logger.info(
+            "Cleaned up %d zombie session(s) on new SSE connect: %s",
+            len(zombie_ids),
+            zombie_ids,
+        )
+
+
 class InitGuardMiddleware:
     """
     Pure-ASGI middleware that delays non-handshake MCP messages until the
     per-session initialization sequence completes.
 
-    Behaviour per incoming POST to a path containing ``/messages``:
+    Behaviour per incoming request:
 
-    * ``initialize``                → pass through immediately; ensure the
-                                      per-session event exists.
-    * ``notifications/initialized`` → set the per-session event, then pass
-                                      through.
-    * anything else                 → wait up to ``INIT_TIMEOUT`` seconds for
+    * GET  /sse                     → clean up zombie sessions, then pass
+                                      through unchanged.
+    * POST /messages initialize     → pass through immediately; create the
+                                      per-session event.
+    * POST /messages notifications/initialized
+                                    → set the per-session event (unblocking
+                                      waiting requests), then pass through.
+    * POST /messages <anything else>→ wait up to ``INIT_TIMEOUT`` seconds for
                                       the event to be set, then pass through
-                                      (with or without a warning).
-
-    All other request types (GET, non-/messages paths, SSE upgrades) are
-    forwarded unchanged.
+                                      (with or without a timeout warning).
+    * everything else               → pass through unchanged.
     """
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        # Only intercept HTTP POST requests to the messages endpoint.
-        if scope.get("type") != "http" or scope.get("method") != "POST":
+        if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
 
+        method: str = scope.get("method", "")
         path: str = scope.get("path", "")
-        if "/messages" not in path:
+
+        # New SSE connection → evict zombie sessions from previous connections.
+        if method == "GET" and "/sse" in path:
+            _cleanup_zombie_sessions()
+            await self.app(scope, receive, send)
+            return
+
+        # Only intercept POST requests to the messages endpoint.
+        if method != "POST" or "/messages" not in path:
             await self.app(scope, receive, send)
             return
 
@@ -92,21 +124,24 @@ class InitGuardMiddleware:
         body = b"".join(body_chunks)
 
         # Determine the JSON-RPC method without raising on malformed input.
-        method = ""
+        rpc_method = ""
         try:
             rpc_msg = json.loads(body)
             if isinstance(rpc_msg, dict):
-                method = rpc_msg.get("method", "")
+                rpc_method = rpc_msg.get("method", "")
         except (json.JSONDecodeError, ValueError):
             pass
 
-        if method == "initialize":
+        if rpc_method == "initialize":
             # First handshake step — ensure the per-session event exists so
             # that concurrent requests can already start waiting on it.
             _get_or_create_event(session_id)
-            logger.debug("MCP initialize received (session=%s)", session_id)
+            logger.info(
+                "MCP initialize received (session=%s) — waiting for notifications/initialized",
+                session_id,
+            )
 
-        elif method == "notifications/initialized":
+        elif rpc_method == "notifications/initialized":
             # Handshake complete — unblock every request that is waiting.
             event = _get_or_create_event(session_id)
             event.set()
@@ -119,18 +154,20 @@ class InitGuardMiddleware:
             if not event.is_set():
                 logger.info(
                     "Holding '%s' until MCP init completes (session=%s, timeout=%.1fs)",
-                    method,
+                    rpc_method,
                     session_id,
                     INIT_TIMEOUT,
                 )
                 try:
                     await asyncio.wait_for(event.wait(), timeout=INIT_TIMEOUT)
-                    logger.debug("Init complete, forwarding '%s' (session=%s)", method, session_id)
+                    logger.debug(
+                        "Init complete, forwarding '%s' (session=%s)", rpc_method, session_id
+                    )
                 except asyncio.TimeoutError:
                     logger.warning(
                         "Init wait timed out after %.1fs for '%s' (session=%s) — forwarding anyway",
                         INIT_TIMEOUT,
-                        method,
+                        rpc_method,
                         session_id,
                     )
 

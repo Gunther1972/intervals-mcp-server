@@ -7,8 +7,10 @@ This module handles transport configuration and server startup logic.
 import os
 import logging
 
+import anyio
 from mcp.server.fastmcp import FastMCP  # pylint: disable=import-error
 
+from intervals_mcp_server.init_guard import InitGuardMiddleware
 from intervals_mcp_server.utils.types import TransportAliases
 
 logger = logging.getLogger("intervals_icu_mcp_server")
@@ -66,7 +68,7 @@ def start_server(mcp_instance: FastMCP, transport: TransportAliases) -> None:
             mcp_instance.settings.sse_path,
             mcp_instance.settings.message_path,
         )
-        mcp_instance.run(transport="sse", mount_path=mount_path)
+        _run_sse_with_init_guard(mcp_instance, mount_path)
     else:  # STREAMABLE_HTTP
         logger.info(
             "Starting MCP server with Streamable HTTP transport at http://%s:%s%s.",
@@ -75,3 +77,33 @@ def start_server(mcp_instance: FastMCP, transport: TransportAliases) -> None:
             mcp_instance.settings.streamable_http_path,
         )
         mcp_instance.run(transport="streamable-http")
+
+
+def _run_sse_with_init_guard(mcp_instance: FastMCP, mount_path: str | None) -> None:
+    """
+    Start the SSE server with the InitGuardMiddleware applied.
+
+    This replaces the plain ``mcp_instance.run(transport="sse")`` call so
+    that the InitGuardMiddleware can be inserted between uvicorn and the
+    FastMCP Starlette app.  The middleware delays early tool-call requests
+    until the per-session MCP initialization handshake is complete,
+    preventing the race condition that causes Claude Desktop to receive
+    "Received request before initialization was complete" on first connect.
+
+    The function is synchronous (blocking) just like ``FastMCP.run()``.
+    """
+    import uvicorn  # bundled with mcp[cli]
+
+    async def _serve() -> None:
+        starlette_app = mcp_instance.sse_app(mount_path)
+        guarded_app = InitGuardMiddleware(starlette_app)
+        config = uvicorn.Config(
+            guarded_app,
+            host=mcp_instance.settings.host,
+            port=mcp_instance.settings.port,
+            log_level=mcp_instance.settings.log_level.lower(),
+        )
+        server = uvicorn.Server(config)
+        await server.serve()
+
+    anyio.run(_serve)

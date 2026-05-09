@@ -5,7 +5,6 @@ This module handles all HTTP communication with the Intervals.icu API,
 including request management, error handling, and client lifecycle.
 """
 
-from json import JSONDecodeError
 import json
 import logging
 import sys
@@ -142,7 +141,7 @@ def _parse_response(
     """
     try:
         response_data = response.json() if response.content else {}
-    except JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         logger.error("Invalid JSON in response from: %s", full_url)
         return {"error": True, "message": "Invalid JSON in response"}
     response.raise_for_status()
@@ -234,6 +233,17 @@ def _handle_http_status_error(e: httpx.HTTPStatusError) -> dict[str, Any]:
     """
     error_code = e.response.status_code
     error_text = e.response.text
+
+    # Attempt to parse detailed error message from JSON response body
+    try:
+        error_json = e.response.json()
+        if isinstance(error_json, dict) and "error" in error_json:
+            error_text = str(error_json["error"])
+        elif isinstance(error_json, dict) and "message" in error_json:
+            error_text = str(error_json["message"])
+    except (json.JSONDecodeError, ValueError):
+        pass
+
     logger.error("HTTP error: %s - %s", error_code, error_text)
     return {
         "error": True,

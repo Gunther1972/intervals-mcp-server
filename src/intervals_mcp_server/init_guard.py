@@ -28,7 +28,8 @@ import asyncio
 import json
 import logging
 from urllib.parse import parse_qs
-from typing import Any
+from typing import Any, cast
+from collections.abc import MutableMapping
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -118,9 +119,9 @@ class InitGuardMiddleware:
         body_chunks: list[bytes] = []
         more_body = True
         while more_body:
-            message: dict[str, Any] = await receive()
-            body_chunks.append(message.get("body", b""))
-            more_body = message.get("more_body", False)
+            message: MutableMapping[str, Any] = await receive()
+            body_chunks.append(cast(bytes, message.get("body", b"")))
+            more_body = bool(message.get("more_body", False))
         body = b"".join(body_chunks)
 
         # Determine the JSON-RPC method without raising on malformed input.
@@ -128,7 +129,7 @@ class InitGuardMiddleware:
         try:
             rpc_msg = json.loads(body)
             if isinstance(rpc_msg, dict):
-                rpc_method = rpc_msg.get("method", "")
+                rpc_method = str(rpc_msg.get("method", ""))
         except (json.JSONDecodeError, ValueError):
             pass
 
@@ -178,7 +179,7 @@ class InitGuardMiddleware:
         # normally.
         body_sent = False
 
-        async def replay_receive() -> dict[str, Any]:
+        async def replay_receive() -> MutableMapping[str, Any]:
             nonlocal body_sent
             if not body_sent:
                 body_sent = True

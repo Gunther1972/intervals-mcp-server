@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 
-class _KeyTracker(dict):
+class _KeyTracker(dict[str, Any]):
     """A dict wrapper that records which keys are accessed."""
 
     def __init__(self, data: dict[str, Any]) -> None:
@@ -25,7 +25,8 @@ class _KeyTracker(dict):
         return super().__getitem__(key)
 
     def __contains__(self, key: object) -> bool:
-        self.accessed.add(key)
+        if isinstance(key, str):
+            self.accessed.add(key)
         return super().__contains__(key)
 
 
@@ -290,11 +291,14 @@ def format_wellness_entry(entries: dict[str, Any], include_all_fields: bool = Fa
     Returns:
         A formatted string representation of the wellness entry.
     """
+    accessed_keys: set[str] = set()
     if include_all_fields:
-        entries = _KeyTracker(entries)
+        tracker = _KeyTracker(entries)
         # Mark metadata keys so they don't appear in "Other Fields"
-        entries.get("date")
-        entries.get("updated")
+        tracker.get("date")
+        tracker.get("updated")
+        entries = tracker
+        accessed_keys = tracker.accessed
 
     lines = ["Wellness Data:"]
     lines.append(f"Date: {entries.get('id', 'N/A')}")
@@ -353,7 +357,7 @@ def format_wellness_entry(entries: dict[str, Any], include_all_fields: bool = Fa
         lines.append(f"Status: {'Locked' if entries.get('locked') else 'Unlocked'}")
 
     if include_all_fields:
-        other_lines = _format_other_fields(entries, entries.accessed)
+        other_lines = _format_other_fields(entries, accessed_keys)
         if other_lines:
             lines.append("")
             lines.append("Other Fields:")
@@ -382,10 +386,11 @@ Description: {event_desc}"""
 def format_event_details(event: dict[str, Any]) -> str:
     """Format detailed event information into a readable string."""
 
+    event_date = event.get("date", event.get("start_date_local", "Unknown"))
     event_details = f"""Event Details:
 
 ID: {event.get("id", "N/A")}
-Date: {event.get("date", "Unknown")}
+Date: {event_date}
 Name: {event.get("name", "Unnamed")}
 Description: {event.get("description", "No description")}"""
 

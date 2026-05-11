@@ -4,7 +4,6 @@ Event-related MCP tools for Intervals.icu.
 This module contains tools for retrieving, creating, updating, and deleting athlete events.
 """
 
-import json
 from datetime import datetime
 from typing import Any
 
@@ -221,7 +220,7 @@ async def delete_event(
     )
     if isinstance(result, dict) and "error" in result:
         return f"Error deleting event: {result.get('message')}"
-    return json.dumps(result, indent=2)
+    return f"Successfully deleted event with ID: {event_id}"
 
 
 async def _fetch_events_for_deletion(

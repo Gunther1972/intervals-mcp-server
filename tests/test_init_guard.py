@@ -22,9 +22,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from intervals_mcp_server.init_guard import (  # pylint: disable=wrong-import-position
-    INIT_TIMEOUT,
     InitGuardMiddleware,
-    _cleanup_zombie_sessions,
     _session_events,
 )
 

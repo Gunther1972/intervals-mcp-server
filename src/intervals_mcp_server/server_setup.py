@@ -49,9 +49,9 @@ def setup_transport() -> TransportAliases:
 def start_server(mcp_instance: FastMCP, transport: TransportAliases) -> None:
     # Forceer host en poort voor Render
     mcp_instance.settings.host = os.getenv("FASTMCP_HOST", "0.0.0.0")
-    port = os.getenv("PORT")
-    if port:
-        mcp_instance.settings.port = int(port)
+    port_env = os.getenv("PORT")
+    if port_env:
+        mcp_instance.settings.port = int(port_env)
 
     host = mcp_instance.settings.host
     port = mcp_instance.settings.port
